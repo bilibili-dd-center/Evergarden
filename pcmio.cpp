@@ -18,9 +18,14 @@ namespace Evergarden::IO
 	std::unique_ptr<float> ReadPCM16LE(std::string filename, int* nSamplesOut)
 	{
 	    spdlog::info(format(LOG_PREFIX "Input: {0}", filename));
+
+        auto path = std::filesystem::path(filename);
+	    if (!std::filesystem::exists(path))
+	        throw PCMIOException("PCM file not exists!");
+
 	    unsigned long long length;
         try {
-            length = std::filesystem::file_size(std::filesystem::path(filename));
+            length = std::filesystem::file_size(path);
         } catch (std::ios_base::failure& ex) {
             std::throw_with_nested(PCMIOException("Failed to read from PCM file!"));
         }

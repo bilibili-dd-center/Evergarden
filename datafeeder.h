@@ -6,68 +6,87 @@
 #include "bDNN.h"
 
 namespace Evergarden::Prediction {
-    const int w = 19;
-    const int u = 9;
+    const int dw = 19;
+    const int du = 9;
 
     template <typename data_type>
     class DataFeeder {
     public:
-        DataFeeder(data_type *input, int nWindows, int nRows, int batchSize);
+        DataFeeder(data_type *input, int nWindows, int nChannels, int batchSize, int w = dw, int u = du);
         ~DataFeeder();
 
         void FeedNext();
+        bool HasNext();
 
         data_type *currentBatch;
+        data_type *currentBatchWithoutPadded;
         int currentBatchSize;
 
         int rowLength;
     private:
-        data_type *input;
-
-        data_type *padded;
+        data_type *input, *temp;
+        int *neighbors;
 
         int nWindows;
-        int nRows;
-        int batchSize;
+        int nChannels;
+        int batchSize, nbDNNBlocks;
 
-        std::unique_ptr<data_type> paddedGuard;
         std::unique_ptr<data_type> batchGuard;
+        std::unique_ptr<data_type> tempGuard;
+        std::unique_ptr<int> neighborsGuard;
 
         bDNN<data_type> bdnn;
 
         int pos;
+        int w, u;
     };
 
     template<typename data_type>
-    DataFeeder<data_type>::DataFeeder(data_type *input, int nWindows, int nRows, int batchSize)
-    : input(input), nWindows(nWindows), nRows(nRows), batchSize(batchSize), bdnn(bDNN<data_type>(w, u, batchSize)) {
-        int batchPadding = batchSize - nWindows % batchSize;
-        int windowPadding = w;
-        int resultRows = nWindows + windowPadding * 2 + batchPadding;
+    DataFeeder<data_type>::DataFeeder(data_type *input, int nWindows, int nChannels, int batchSize, int w, int u)
+    : input(input), nWindows(nWindows), nChannels(nChannels), batchSize(batchSize), bdnn(bDNN<data_type>(w, u, batchSize)),
+    w(w), u(u) {
 
-        paddedGuard = std::unique_ptr<data_type>(new data_type[resultRows * static_cast<unsigned long long>(nRows)]);
-        padded = paddedGuard.get();
-
-        data_type *target = padded;
-        for (int i = 0; i < nRows; i++) {
-            memset(target, 0, windowPadding * sizeof(data_type));
-            memcpy(target + windowPadding, input + i * nWindows, nWindows * sizeof(data_type));
-            memset(target + windowPadding + nWindows, 0, (windowPadding + batchPadding) * sizeof(data_type));
-            target += resultRows;
-        }
-
-        batchGuard = std::unique_ptr<data_type>(new data_type[bdnn.CalculatebDNNLength(resultRows, nRows)]);
+        batchGuard = std::unique_ptr<data_type>(new data_type[bdnn.CalculatebDNNLength(batchSize, nChannels)]);
         currentBatch = batchGuard.get();
+        currentBatchWithoutPadded = currentBatch + bdnn.nbDNNBlocks * nChannels * w;
 
-        pos = w;
-        rowLength = nRows * bdnn.nbDNNBlocks;
+        pos = 0;
+        nbDNNBlocks = CalcualtebDNNBlocks(w, u);
+        rowLength = nChannels * nbDNNBlocks;
+
+        tempGuard = std::unique_ptr<data_type>(new data_type[nChannels]);
+        neighborsGuard = std::unique_ptr<int>(new int[nbDNNBlocks]);
+        temp = tempGuard.get();
+        neighbors = neighborsGuard.get();
+
+        GeneratebDNNNeighbors(neighbors, w, u);
     }
 
     template<typename data_type>
     void DataFeeder<data_type>::FeedNext() {
         currentBatchSize = std::min(nWindows - pos, batchSize);
+
+        int nOutputColumns = nChannels * nbDNNBlocks;
+        int rowsLimit = batchSize + w * 2;
+        std::memset(currentBatch, 0, rowsLimit * nOutputColumns * sizeof(data_type));
+        for (int row = -w; row < batchSize + w; row++) {
+            if (pos + row < 0) continue;
+            for (int ch = 0; ch < nChannels; ch++)
+                temp[ch] = input[ch * nWindows + pos + row];
+            for (int block = 0; block < nbDNNBlocks; block++) {
+                int outputRow = row + neighbors[block];
+                if (outputRow < 0 || outputRow >= rowsLimit)
+                    continue;
+                std::memcpy(currentBatch + outputRow * nOutputColumns + block * nChannels, temp, nChannels * sizeof(data_type));
+            }
+        }
+
         pos += currentBatchSize;
-        bdnn.FeedbDNN(padded, pos, currentBatchSize, nRows, currentBatch);
+    }
+
+    template<typename data_type>
+    bool DataFeeder<data_type>::HasNext() {
+        return nWindows - pos > 0;
     }
 
     template<typename data_type>

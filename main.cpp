@@ -7,7 +7,7 @@
 #include "mrcg.h"
 #include "datafeeder.h"
 
-void write(std::string filename, float* matrix, int rows, int cols) {
+void writenm(std::string filename, float* matrix, int rows, int cols) {
     std::ofstream out(filename);
     for (int i = 0; i < rows;i++) {
         for (int j = 0;j<cols;j++)
@@ -25,25 +25,20 @@ int main(int argc, char** argv) {
     auto nE = Evergarden::MRCG::CalculateNEnvelope(len, 16000, 10);
     auto nW = Evergarden::MRCG::CalculateNWindows(len, 16000, 10);
 
-    auto envelope = new double[nE * 64];
-    auto allCochleagrams = new float[nW * 64 * 16];
-    auto windows = new double[nW * 64];
-    auto windows2 = new double[nW * 64];
-    auto smoothed = new double[nW * 64];
-    auto smoothed2 = new double[nW * 64];
-    Evergarden::MRCG::Envelope(ptr, envelope, len, 16000, 50, 8000, 64, 10);
-    Evergarden::MRCG::ToWindow(envelope, allCochleagrams, len, 16000, 64, 25, 10);
-    Evergarden::MRCG::ToWindow(envelope, allCochleagrams + 64 * nW, len, 16000, 64, 200, 10);
-    Evergarden::MRCG::Smooth(allCochleagrams, allCochleagrams + 64 * 2 * nW, nW, 64, 5, 5);
-    Evergarden::MRCG::Smooth(allCochleagrams, allCochleagrams + 64 * 3 * nW, nW, 64, 11, 11);
-    Evergarden::MRCG::Delta(allCochleagrams, nW, 64 * 4, allCochleagrams + 64 * 4 * nW, 9);
-    Evergarden::MRCG::Delta(allCochleagrams, nW, 64 * 4, allCochleagrams + 64 * 12 * nW, 5);
-    Evergarden::MRCG::Delta(allCochleagrams + 64 * 12 * nW, nW, 64 * 4, allCochleagrams + 64 * 8 * nW, 5);
+    auto allCochleagrams = new float[nW * 64 * 12];
+    Evergarden::MRCG::MRCGDefault(ptr, allCochleagrams, 16000, len);
 
+    /*float *finput = new float[153600];
+    for (int i = 0; i < 153600; i++)
+        finput[i] = i + 1;*/
+
+
+    //Evergarden::Prediction::DataFeeder feeder(finput, 153600 / 768, 64 * 12, 128);
     Evergarden::Prediction::DataFeeder feeder(allCochleagrams, nW, 64 * 12, 128);
     feeder.FeedNext();
+    //feeder.FeedNext();
 
-    write("E:\\rv.txt", feeder.currentBatch, 64 * feeder.rowLength, feeder.currentBatchSize);
+    writenm("E:\\rv.txt", feeder.currentBatch, feeder.currentBatchSize + 38, feeder.rowLength);
 
     std::cout << "Wrote"  << std::endl;
     return 0;

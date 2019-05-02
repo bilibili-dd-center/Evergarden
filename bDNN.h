@@ -2,21 +2,15 @@
 
 #include <memory>
 #include <algorithm>
+#include <cstring>
 
 namespace Evergarden::Prediction {
-    const int bDNNLength = 7;
-    const int bDNNNeighbor[] = { -19, -10, -1, 0, 1, 10, 19 };
-
-    inline int CalculatebDNNLength(int nRows, int nCols) {
-        return nRows * nCols * bDNNLength;
+    inline int CalcualtebDNNBlocks(int w, int u) {
+        int neighborsLength = (w - u) % u == 0 ? (w - u) / u : (w - u) / u + 1;
+        return neighborsLength * 2 + 3;
     }
 
-    template <typename data_type>
-    void bDNNTransform(data_type *input, int nRows, int nCols, data_type *output) {
-        int length = CalculatebDNNLength(nRows, nCols);
-        memset(output, 0, length * sizeof(data_type));
-
-    }
+    void GeneratebDNNNeighbors(int *output, int w, int u);
 }
 template <typename data_type>
 class bDNN {
@@ -32,9 +26,9 @@ public:
 
     bDNN(int w, int u, int batchSize);
     inline int CalculatebDNNLength(int nRows, int nCols) {
-        return nRows * nCols * nbDNNBlocks;
+        return (nRows + w * 2) * nCols * nbDNNBlocks;
     }
-    void FeedbDNN(data_type *input, int rowPos, int nRows, int nCols, data_type *output);
+    void FeedbDNN(data_type *input, int rowPos, int nRows, int nTotalRows, int nCols, data_type *output);
 };
 
 template<typename data_type>
@@ -55,21 +49,26 @@ bDNN<data_type>::bDNN(int w, int u, int batchSize) : w(w), u(u), batchSize(batch
     for (; i < nbDNNBlocks; i++)
         neighbors[i] = u + 1 + u * (i - fnt);
 
-    auto m = *std::min_element(neighbors, neighbors + nbDNNBlocks);
     for (i = 0; i < nbDNNBlocks; i++)
-        neighbors[i] += m;
+        neighbors[i] += w;
     std::reverse(neighbors, neighbors + nbDNNBlocks);
 }
 
 template<typename data_type>
-void bDNN<data_type>::FeedbDNN(data_type *input, int rowPos, int nRows, int nCols, data_type *output) {
-    int outputCols = nCols * nbDNNBlocks;
-
-    for (int i = 0; i < nRows; i++) {
-        for (int n = 0; n < nbDNNBlocks; n++) {
-            for (int c = 0; c < nCols; c++) {
-                output[i * outputCols + n * nCols + c] = input[c * nRows + rowPos + i + neighbors[n]];
-            }
+void bDNN<data_type>::FeedbDNN(data_type *input, int rowPos, int nRows, int nTotalRows, int nCols, data_type *output) {
+    int nOutputColumns = nCols * nbDNNBlocks;
+    int rowsLimit = nRows + w * 2;
+    std::memset(output, 0, rowsLimit * nOutputColumns * sizeof(data_type));
+    data_type *temp = new data_type[nCols];
+    for (int row = -w; row < nRows + w; row++) {
+        if (rowPos + row < 0) continue;
+        for (int ch = 0; ch < nCols; ch++)
+            temp[ch] = input[ch * nTotalRows + rowPos + row];
+        for (int block = 0; block < nbDNNBlocks; block++) {
+            int outputRow = row + neighbors[block];
+            if (outputRow < 0 || outputRow >= rowsLimit)
+                continue;
+            std::memcpy(output + outputRow * nOutputColumns + block * nCols, temp, nCols * sizeof(data_type));
         }
     }
 }
