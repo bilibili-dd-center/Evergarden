@@ -1,6 +1,6 @@
 #include "bDNN.h"
 
-namespace Evergarden::Prediction {
+namespace Evergarden::VAD::Prediction {
     void GeneratebDNNNeighbors(int *output, int w, int u) {
         int neighborsLength = (w - u) % u == 0 ? (w - u) / u : (w - u) / u + 1;
         int nbDNNBlocks = neighborsLength * 2 + 3;

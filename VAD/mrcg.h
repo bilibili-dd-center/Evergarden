@@ -30,27 +30,29 @@ using namespace fmt;
 #define HzToErbRate(x)  (21.4*log10(4.37e-3*(x)+1.0))
 #define ErbRateToHz(x)  ((pow(10.0,((x)/21.4))-1.0)/4.37e-3)
 
-#define square(x)    ((x) * (x))
-#define cube(x)      ((x) * (x) * (x))
-#define fourthPow(x) ((x) * (x)* (x) * (x))
+#define MRCG_square(x)    ((x) * (x))
+#define MRCG_cube(x)      ((x) * (x) * (x))
+#define MRCG_fourthPow(x) ((x) * (x)* (x) * (x))
 
-namespace Evergarden::MRCG {
+namespace Evergarden::VAD::MRCG {
     const int defaultWindowShiftMs = 10;
     const int defaultWindowLengthMs1 = 10;
     const int defaultWindowLengthMs2 = 10;
     const int defaultNChannels = 64;
+	const int defaultResultNChannels = 768;
+	const int batchSize = 1024;
 
     inline int MsToSamples(const int sampleFreq, const int ms) {
         return lround(ms * sampleFreq / 1000);
     }
 
-    inline int CalculateNWindows(const int nSamples, const int sampleFreq, const int windowShiftMs) {
+    inline int64_t CalculateNWindows(const int nSamples, const int sampleFreq, const int windowShiftMs) {
         int windowShiftSamples = MsToSamples(sampleFreq, windowShiftMs);
-        return static_cast<int>(ceil(static_cast<double>(nSamples) / static_cast<double>(windowShiftSamples)));
+        return static_cast<int64_t>(ceil(static_cast<long double>(nSamples) / static_cast<long double>(windowShiftSamples)));
     }
 
-    inline int CalculateNEnvelope(const int nSamples, const int sampleFreq, const int windowShiftMs) {
-        auto nWindows = CalculateNWindows(nSamples, sampleFreq, windowShiftMs);
+    inline int64_t CalculateNEnvelope(const int nSamples, const int sampleFreq, const int windowShiftMs) {
+		int64_t nWindows = CalculateNWindows(nSamples, sampleFreq, windowShiftMs);
         return (nWindows * windowShiftMs) * sampleFreq / 1000;
     }
 
@@ -59,7 +61,7 @@ namespace Evergarden::MRCG {
     void Envelope(
             const float *input,
             double *envelope,
-            int nSamples,
+		    int64_t nSamples,
             int sampleFreq,
             int lowCenterFreq,
             int highCenterFreq,
@@ -97,13 +99,13 @@ namespace Evergarden::MRCG {
     void ToWindow(
             const double *envelope,
             output_type *output,
-            const int nSamples,
+            const int64_t nSamples,
             const int sampleFreq,
             const int nChannels,
             const int windowLengthMs,
             const int windowShiftMs) {
-        int nWindows = CalculateNWindows(nSamples, sampleFreq, windowShiftMs);
-        int nPaddedSamples = CalculateNEnvelope(nSamples, sampleFreq, windowShiftMs);
+		int64_t nWindows = CalculateNWindows(nSamples, sampleFreq, windowShiftMs);
+		int64_t nPaddedSamples = CalculateNEnvelope(nSamples, sampleFreq, windowShiftMs);
         int windowShiftSamples = MsToSamples(sampleFreq, windowShiftMs);
         int windowLengthSamples = MsToSamples(sampleFreq, windowLengthMs);
         //double integrationDecay = exp(-(1000.0 / (sampleFreq * temporalIntegrationMs)));
@@ -113,6 +115,7 @@ namespace Evergarden::MRCG {
         //spdlog::info(LOG_PREFIX "Summarizing cochleagram into windows...");
         /*spdlog::debug(format(LOG_PREFIX "nWindows={0}, nPaddedSamples={1}, increment={2}", nWindows, nPaddedSamples,
                 increment));*/
+#pragma omp parallel for
         for (int channel = 0; channel < nChannels; channel++) {
             /*==================================================================================
              * we take the mean of the smoothed envelope as the energy value in each frame
@@ -155,6 +158,7 @@ namespace Evergarden::MRCG {
         //spdlog::info(LOG_PREFIX "Smoothing cochleagram features...");
 
         int fillSize = (2 * vSpan + 1) * (2 * hSpan + 1);
+#pragma omp parallel for
         for (int i = 0; i < nChannels; i++) {
             const output_type *rowBegin = windows + static_cast<long long>(nWindows) * std::max(0, i - vSpan);
             const output_type *rowEnd = windows + static_cast<long long>(nWindows) * std::min(nChannels, i + vSpan + 1);
@@ -190,6 +194,7 @@ namespace Evergarden::MRCG {
         for (int i = 0; i < points; i++)
             window[i] = windowValue--;
 
+#pragma omp parallel for
         for (int row = 0; row < nRows; row++) {
             output_type *outputRowPtr = output + row * nColumns;
             output_type *inputRowPtr = matrix + row * nColumns;
@@ -209,4 +214,55 @@ namespace Evergarden::MRCG {
             }
         }
     }
+
+	class EnvelopeCalculator
+	{
+    public:
+		EnvelopeCalculator(
+			const float* input,
+			int64_t nSamples,
+			int64_t batchSize,
+			int sampleFreq,
+			int lowCenterFreq,
+			int highCenterFreq,
+			int channel,
+			int nChannels,
+			int windowShiftMs);
+
+		bool HasNext()
+		{
+			return pos < nPaddedSamples;
+		}
+		void FeedNext(double *envelope);
+	private:
+		const float* input;
+		int64_t nSamples, nPaddedSamples;
+		int64_t pos = 0;
+		int sampleFreq, channel, batchSize;
+
+		double lowErb, highErb, spaceErb, tptbw, a, gain, centerFreq;
+		double a1;
+		double a2;
+		double a3;
+		double a4;
+		double a5;
+
+		double p0r = 0.0;
+		double p1r = 0.0;
+		double p2r = 0.0;
+		double p3r = 0.0;
+		double p4r = 0.0;
+
+		double p0i = 0.0;
+		double p1i = 0.0;
+		double p2i = 0.0;
+		double p3i = 0.0;
+		double p4i = 0.0;
+
+		double coscf, sincf;
+		double oldcs, oldsn;
+		double u0r, u0i;
+		double cs = 1;
+		double sn = 0;
+	};
 }

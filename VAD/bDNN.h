@@ -4,12 +4,7 @@
 #include <algorithm>
 #include <cstring>
 
-namespace Evergarden::Prediction {
-    inline int CalcualtebDNNBlocks(int w, int u) {
-        int neighborsLength = (w - u) % u == 0 ? (w - u) / u : (w - u) / u + 1;
-        return neighborsLength * 2 + 3;
-    }
-
+namespace Evergarden::VAD::Prediction {
     void GeneratebDNNNeighbors(int *output, int w, int u);
 }
 template <typename data_type>
